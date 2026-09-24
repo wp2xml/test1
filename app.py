@@ -60,6 +60,8 @@ Requirements:
         })
 
     except Exception as e:
+        print("OPENAI ERROR:", repr(e))
+        
         return jsonify({
             "success": False,
             "error": str(e)
