@@ -50,7 +50,7 @@ Requirements:
 
     try:
         response = client.responses.create(
-            model="gpt-6-astra",
+            model="gpt-5.6-luna",
             input=prompt
         )
 
