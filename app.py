@@ -1,68 +1,92 @@
+import os
 from flask import Flask, request, jsonify
 from openai import OpenAI
-import os
 
 app = Flask(__name__)
 
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY")
-)
+# Configure these as environment variables in Render.
+# OPENAI_API_KEY is required.
+# OPENAI_MODEL defaults to "gpt-6-luna"; change it if your provider uses another model ID.
+MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-@app.route("/")
-def home():
+SYSTEM_PROMPT = """
+You are a real-estate search assistant for Agra, Uttar Pradesh, India.
+Interpret the user's property-search request clearly and accurately.
+Do not invent property listings, prices, addresses, availability, or URLs.
+If no live property-search tool or listing database is connected, explain that
+you can interpret the request but cannot verify current listings.
+Return a concise answer and, where useful, a JSON-like summary of:
+- property_type
+- transaction_type (rent or sale)
+- maximum_monthly_rent_inr
+- location
+- user_query
+Use Indian rupee amounts and Indian location conventions.
+"""
+
+
+@app.get("/")
+def health_check():
     return jsonify({
-        "service": "AI Property Description API",
-        "status": "ok"
+        "service": "Real Agra Service",
+        "status": "ok",
+        "message": "Send a POST request with JSON: {\"query\": \"your property search\"}",
+        "model": MODEL,
     })
 
 
-@app.route("/generate-description", methods=["POST"])
-def generate_description():
+@app.get("/health")
+def health():
+    return jsonify({"status": "ok"})
 
-    data = request.get_json()
 
-    if not data:
+@app.post("/")
+@app.post("/search")
+def search():
+    data = request.get_json(silent=True) or {}
+    query = data.get("query") or request.args.get("query")
+
+    if not isinstance(query, str) or not query.strip():
         return jsonify({
-            "error": "JSON data is required"
+            "error": "Missing query",
+            "example": {
+                "query": "Shop for rent under Rs. 20000 Shastripuram to Kargil road, Agra, Uttar Pradesh, India"
+            },
         }), 400
 
-    prompt = f"""
-Create a professional real-estate property description.
-
-Property information:
-
-Title: {data.get("title", "")}
-Location: {data.get("location", "")}
-Price: {data.get("price", "")}
-Bedrooms: {data.get("bedrooms", "")}
-Bathrooms: {data.get("bathrooms", "")}
-Area: {data.get("area", "")}
-Features: {data.get("features", "")}
-
-Requirements:
-- Write 150-200 words.
-- Use professional real-estate language.
-- Keep the information factual.
-- Do not invent features.
-- Make it suitable for a real-estate portal.
-"""
+    if not os.getenv("OPENAI_API_KEY"):
+        return jsonify({
+            "error": "Server is not configured",
+            "detail": "Set the OPENAI_API_KEY environment variable in Render."
+        }), 500
 
     try:
         response = client.responses.create(
-            model="gpt-5.6-luna",
-            input=prompt
+            model=MODEL,
+            instructions=SYSTEM_PROMPT,
+            input=query.strip(),
         )
+        answer = response.output_text
 
         return jsonify({
-            "success": True,
-            "description": response.output_text
+            "query": query.strip(),
+            "model": MODEL,
+            "answer": answer,
+            "note": "This endpoint uses the AI model to interpret the search. Live listings require a connected property database or search API."
         })
-
-    except Exception as e:
-        print("OPENAI ERROR:", repr(e))
-        
+    except Exception as exc:
+        # Return a useful error without exposing credentials or internal details.
+        app.logger.exception("AI request failed")
         return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+            "error": "AI request failed",
+            "detail": str(exc),
+            "model": MODEL,
+        }), 502
+
+
+if __name__ == "__main__":
+    # Local development only. Render should use the Gunicorn start command.
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False)
